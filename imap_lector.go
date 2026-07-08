@@ -167,16 +167,20 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 
 	log.Println("Iniciando monitoreo...")
 
-	// Mantener registro del último correo procesado para evitar duplicados
-	var ultimoID uint32
-	var ultimaFecha time.Time
-
-	// Obtener el ID del último correo actual para inicializar y evitar reprocesarlo
-	correosIniciales, err := l.ObtenerEnviados(1)
-	if err == nil && len(correosIniciales) > 0 {
-		ultimoID = correosIniciales[0].ID
-		ultimaFecha = correosIniciales[0].Fecha
+	// Seleccionar el buzón inicialmente para obtener el número actual de mensajes
+	nombreBuzon := "[Gmail]/Sent Mail"
+	estadoBuzon, err := l.cliente.Select(nombreBuzon, true)
+	if err != nil {
+		nombreBuzonAlt := "[Gmail]/Enviados"
+		estadoBuzon, err = l.cliente.Select(nombreBuzonAlt, true)
+		if err != nil {
+			return fmt.Errorf("error al inicializar monitoreo en carpeta de enviados: %w", err)
+		}
 	}
+
+	// Mantener el registro de la cantidad de mensajes iniciales como punto de partida
+	ultimoProcesadoID := estadoBuzon.Messages
+	log.Printf("Monitoreo inicializado. Mensajes actuales en Enviados: %d\n", ultimoProcesadoID)
 
 	// Ticker para comprobar la carpeta cada 10 segundos
 	ticker := time.NewTicker(10 * time.Second)
@@ -192,23 +196,40 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 			estadoBuzonActual, err = l.cliente.Select(nombreBuzonAlt, true)
 		}
 
-		if err == nil && estadoBuzonActual.Messages > 0 {
-			// Recuperar el último correo enviado
-			nuevosCorreos, err := l.ObtenerEnviados(1)
-			if err == nil && len(nuevosCorreos) > 0 {
-				correoNuevo := nuevosCorreos[0]
-				// Verificar si realmente es un correo nuevo comparando ID y fecha
-				if correoNuevo.ID != ultimoID || !correoNuevo.Fecha.Equal(ultimaFecha) {
-					log.Printf("Nuevo correo detectado en Enviados (ID anterior: %d -> Nuevo: %d). Procesando...\n", ultimoID, correoNuevo.ID)
-					ultimoID = correoNuevo.ID
-					ultimaFecha = correoNuevo.Fecha
+		if err != nil {
+			log.Printf("Error al seleccionar buzón durante el monitoreo: %v\n", err)
+			continue
+		}
 
-					// Enviar el correo al canal para su procesamiento
-					canalCorreos <- correoNuevo
-				}
-			} else if err != nil {
-				log.Printf("Error al verificar la carpeta de enviados: %v\n", err)
+		mensajesTotales := estadoBuzonActual.Messages
+
+		// Si hay nuevos mensajes en la carpeta
+		if mensajesTotales > ultimoProcesadoID {
+			diferencia := int(mensajesTotales - ultimoProcesadoID)
+			log.Printf("Se detectaron %d nuevos mensajes en Enviados. Obteniendo...\n", diferencia)
+
+			// Obtener todos los correos nuevos correspondientes a la diferencia
+			nuevosCorreos, err := l.ObtenerEnviados(diferencia)
+			if err != nil {
+				log.Printf("Error al obtener nuevos correos: %v\n", err)
+				continue
 			}
+
+			// NOTA: ObtenerEnviados inserta al inicio los más nuevos (orden descendente).
+			// Para procesarlos uno a uno en orden cronológico correcto (del más antiguo al más nuevo),
+			// debemos iterar sobre nuevosCorreos en orden inverso (desde el final hasta el principio).
+			for i := len(nuevosCorreos) - 1; i >= 0; i-- {
+				correoNuevo := nuevosCorreos[i]
+				log.Printf("Procesando y encolando correo: ID %d, Asunto: %s\n", correoNuevo.ID, correoNuevo.Asunto)
+				canalCorreos <- correoNuevo
+			}
+
+			// Actualizar el puntero del último procesado al total de mensajes actual
+			ultimoProcesadoID = mensajesTotales
+		} else if mensajesTotales < ultimoProcesadoID {
+			// Si la cantidad de mensajes disminuyó (por ejemplo, porque el usuario borró correos viejos en la bandeja),
+			// simplemente sincronizamos el contador sin alertar error
+			ultimoProcesadoID = mensajesTotales
 		}
 	}
 

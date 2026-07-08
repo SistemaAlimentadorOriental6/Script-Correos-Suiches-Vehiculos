@@ -98,85 +98,86 @@ func main() {
 
 // procesarCorreo contiene la lógica para procesar un correo, extraer adjuntos, leer el PDF, guardar en la BD y disparar el webhook.
 func procesarCorreo(correo Correo, directorioDescargas string, webhookURL string, db *sql.DB) {
+	// Filtrar correos que no contienen adjuntos PDF
+	if len(correo.Adjuntos) == 0 {
+		return
+	}
+
 	fmt.Printf("De: %s\n", correo.De)
 	fmt.Printf("Para: %s\n", strings.Join(correo.Para, ", "))
 	fmt.Printf("Fecha: %s\n", correo.Fecha.Format("2006-01-02 15:04:05"))
 	fmt.Printf("Asunto: %s\n", correo.Asunto)
 	fmt.Printf("Message-ID: %s\n", correo.MessageID)
 
-	if len(correo.Adjuntos) > 0 {
-		fmt.Println("    Archivos PDF Adjuntos:")
-		for _, adjunto := range correo.Adjuntos {
-			prefijoFecha := correo.Fecha.Format("20060102_150405")
-			nombreUnico := fmt.Sprintf("%s_%s", prefijoFecha, adjunto.Nombre)
+	fmt.Println("    Archivos PDF Adjuntos:")
+	for _, adjunto := range correo.Adjuntos {
+		prefijoFecha := correo.Fecha.Format("20060102_150405")
+		nombreUnico := fmt.Sprintf("%s_%s", prefijoFecha, adjunto.Nombre)
 
-			rutaArchivo := filepath.Join(directorioDescargas, nombreUnico)
-			err := os.WriteFile(rutaArchivo, adjunto.Contenido, 0644)
-			if err != nil {
-				fmt.Printf("      - [ERROR] No se pudo guardar %s: %v\n", nombreUnico, err)
-				continue
+		rutaArchivo := filepath.Join(directorioDescargas, nombreUnico)
+		err := os.WriteFile(rutaArchivo, adjunto.Contenido, 0644)
+		if err != nil {
+			fmt.Printf("      - [ERROR] No se pudo guardar %s: %v\n", nombreUnico, err)
+			continue
+		}
+
+		fmt.Printf("      - [Descargado] %s -> Guardado en: %s\n", adjunto.Nombre, rutaArchivo)
+
+		// Extraer y guardar texto del PDF
+		fmt.Println("        [Analizando PDF] Extrayendo contenido de texto...")
+		textoExtraido, errExtraccion := extraerTextoPDF(rutaArchivo)
+		if errExtraccion != nil {
+			fmt.Printf("        - [ERROR PDF] No se pudo leer el contenido del PDF: %v\n", errExtraccion)
+			continue
+		}
+
+		// Eliminar el PDF del disco para no acumular archivos innecesarios
+		if errBorrar := os.Remove(rutaArchivo); errBorrar != nil {
+			fmt.Printf("        - [ADVERTENCIA] No se pudo eliminar el PDF %s: %v\n", rutaArchivo, errBorrar)
+		} else {
+			fmt.Printf("        - [PDF Eliminado] %s borrado del disco.\n", rutaArchivo)
+		}
+
+		// Generar nombre de archivo TXT reemplazando la extensión
+		nombreTXT := strings.TrimSuffix(nombreUnico, filepath.Ext(nombreUnico)) + ".txt"
+		rutaTXT := filepath.Join(directorioDescargas, nombreTXT)
+
+		// Formatear y filtrar únicamente la información deseada de la batería
+		textoFormateado := filtrarYFormatearReporte(textoExtraido)
+
+		errTXT := os.WriteFile(rutaTXT, []byte(textoFormateado), 0644)
+		if errTXT != nil {
+			fmt.Printf("        - [ERROR TXT] No se pudo escribir el archivo de texto %s: %v\n", nombreTXT, errTXT)
+		} else {
+			fmt.Printf("        - [Guardado TXT] Reporte limpio guardado en: %s\n", rutaTXT)
+
+			// Persistir datos en MySQL si la conexión a la base de datos está activa
+			if db != nil {
+				fmt.Println("        [Base de Datos] Guardando registro de batería en MySQL...")
+				errDB := GuardarReporteBateria(db, textoFormateado, correo.Fecha, correo.MessageID)
+				if errDB != nil {
+					fmt.Printf("        - [ERROR BD] No se pudo registrar en la base de datos: %v\n", errDB)
+				}
 			}
 
-			fmt.Printf("      - [Descargado] %s -> Guardado en: %s\n", adjunto.Nombre, rutaArchivo)
-
-			// Extraer y guardar texto del PDF
-			fmt.Println("        [Analizando PDF] Extrayendo contenido de texto...")
-			textoExtraido, errExtraccion := extraerTextoPDF(rutaArchivo)
-			if errExtraccion != nil {
-				fmt.Printf("        - [ERROR PDF] No se pudo leer el contenido del PDF: %v\n", errExtraccion)
-				continue
-			}
-
-			// Eliminar el PDF del disco para no acumular archivos innecesarios
-			if errBorrar := os.Remove(rutaArchivo); errBorrar != nil {
-				fmt.Printf("        - [ADVERTENCIA] No se pudo eliminar el PDF %s: %v\n", rutaArchivo, errBorrar)
-			} else {
-				fmt.Printf("        - [PDF Eliminado] %s borrado del disco.\n", rutaArchivo)
-			}
-
-			// Generar nombre de archivo TXT reemplazando la extensión
-			nombreTXT := strings.TrimSuffix(nombreUnico, filepath.Ext(nombreUnico)) + ".txt"
-			rutaTXT := filepath.Join(directorioDescargas, nombreTXT)
-
-			// Formatear y filtrar únicamente la información deseada de la batería
-			textoFormateado := filtrarYFormatearReporte(textoExtraido)
-
-			errTXT := os.WriteFile(rutaTXT, []byte(textoFormateado), 0644)
-			if errTXT != nil {
-				fmt.Printf("        - [ERROR TXT] No se pudo escribir el archivo de texto %s: %v\n", nombreTXT, errTXT)
-			} else {
-				fmt.Printf("        - [Guardado TXT] Reporte limpio guardado en: %s\n", rutaTXT)
-
-				// Persistir datos en MySQL si la conexión a la base de datos está activa
-				if db != nil {
-					fmt.Println("        [Base de Datos] Guardando registro de batería en MySQL...")
-					errDB := GuardarReporteBateria(db, textoFormateado, correo.Fecha, correo.MessageID)
-					if errDB != nil {
-						fmt.Printf("        - [ERROR BD] No se pudo registrar en la base de datos: %v\n", errDB)
-					}
+			// Disparar Webhook HTTP POST con el reporte formateado en JSON
+			if webhookURL != "" {
+				fmt.Println("        [Enviando Webhook] Despachando reporte a la URL del Webhook...")
+				reporte := DatosReporte{
+					De:              correo.De,
+					Fecha:           correo.Fecha,
+					Asunto:          correo.Asunto,
+					TextoFormateado: textoFormateado,
 				}
 
-				// Disparar Webhook HTTP POST con el reporte formateado en JSON
-				if webhookURL != "" {
-					fmt.Println("        [Enviando Webhook] Despachando reporte a la URL del Webhook...")
-					reporte := DatosReporte{
-						De:              correo.De,
-						Fecha:           correo.Fecha,
-						Asunto:          correo.Asunto,
-						TextoFormateado: textoFormateado,
-					}
-
-					errWebhook := EnviarWebhook(webhookURL, reporte)
-					if errWebhook != nil {
-						fmt.Printf("        - [ERROR WEBHOOK] Fallo al enviar al webhook: %v\n", errWebhook)
-					} else {
-						fmt.Println("        - [Webhook OK] Datos del reporte enviados exitosamente.")
-					}
+				errWebhook := EnviarWebhook(webhookURL, reporte)
+				if errWebhook != nil {
+					fmt.Printf("        - [ERROR WEBHOOK] Fallo al enviar al webhook: %v\n", errWebhook)
+				} else {
+					fmt.Println("        - [Webhook OK] Datos del reporte enviados exitosamente.")
 				}
 			}
 		}
-	} else {
-		fmt.Println("    (Sin archivos PDF adjuntos)")
 	}
 	fmt.Println(strings.Repeat("-", 60))
 }

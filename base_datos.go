@@ -257,11 +257,9 @@ func ParsearTextoAReporte(texto string) ReporteBateria {
 			// Guardar el Consejo de reparación como observación
 			reporte.Observacion = strings.TrimSpace(strings.TrimPrefix(linea, "Consejo de reparación:"))
 
-			// Ej: "Consejo de reparación: BUS002 BATERIA 2" o "batería1", etc.
-			reBateria := regexp.MustCompile(`(?i)bater[íi]a\s*(?:no\.?|n[úu]mero)?\s*(?::|-)?\s*(\d+)`)
-			matchBateria := reBateria.FindStringSubmatch(linea)
-			if len(matchBateria) > 1 {
-				reporte.Bateria = fmt.Sprintf("BATERÍA %s", matchBateria[1])
+			// Detectar número de batería con tolerancia a errores tipográficos
+			if bat := extraerNumeroBateria(linea); bat != "" {
+				reporte.Bateria = bat
 			}
 		}
 	}

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/ledongthuc/pdf"
@@ -149,18 +148,8 @@ func filtrarYFormatearReporte(textoCompleto string) string {
 		resultado = append(resultado, fmt.Sprintf("Consejo de reparación: %s", consejo))
 	}
 
-	// 11. Extraer el número de carro (BUS) de todo el texto normalizado (o del consejo)
-	carro := ""
-	reBus := regexp.MustCompile(`(?i)b[úu]s\s*(?:no\.?|n[úu]mero)?\s*(?::|-)?\s*(\d+)`)
-	matchBus := reBus.FindStringSubmatch(textoNormalizado)
-	if len(matchBus) > 1 {
-		digitos := matchBus[1]
-		if num, err := strconv.Atoi(digitos); err == nil {
-			carro = fmt.Sprintf("BUS%03d", num)
-		} else {
-			carro = "BUS" + digitos
-		}
-	}
+	// 11. Extraer el número de carro (BUS) con detección tolerante a errores tipográficos
+	carro := extraerNumeroBus(textoNormalizado)
 	resultado = append(resultado, fmt.Sprintf("Carro: %s", carro))
 
 	return strings.Join(resultado, "\n")

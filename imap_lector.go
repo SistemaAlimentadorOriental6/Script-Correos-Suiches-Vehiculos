@@ -55,65 +55,51 @@ func (l *LectorGmailIMAP) reconectar() error {
 	return nil
 }
 
-// seleccionarCarpetaEnviados intenta abrir una carpeta de enviados de una lista de nombres comunes.
+// seleccionarCarpetaEnviados selecciona la bandeja de entrada (INBOX).
 func (l *LectorGmailIMAP) seleccionarCarpetaEnviados() (*imap.MailboxStatus, error) {
-	carpetasComunes := []string{
-		"INBOX.Sent",
-		"INBOX.Sent Items",
-		"INBOX.Enviados",
-		"INBOX.Archivos enviados",
-		"INBOX.Sent Messages",
-		"Sent",
-		"Sent Items",
-		"Enviados",
-		"Archivos enviados",
-		"Sent Messages",
-		"[Gmail]/Sent Mail",
-		"[Gmail]/Enviados",
+	estadoBuzon, err := l.cliente.Select("INBOX", true)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo abrir la bandeja de entrada INBOX: %w", err)
 	}
-
-	var err error
-	var estadoBuzon *imap.MailboxStatus
-	for _, nombre := range carpetasComunes {
-		estadoBuzon, err = l.cliente.Select(nombre, true)
-		if err == nil {
-			log.Printf("Carpeta de enviados seleccionada con éxito: %q\n", nombre)
-			return estadoBuzon, nil
-		}
-	}
-	return nil, fmt.Errorf("no se pudo encontrar ni abrir ninguna carpeta de enviados estándar: %w", err)
+	return estadoBuzon, nil
 }
 
-// ObtenerEnviados selecciona la carpeta de enviados y obtiene los últimos N correos.
+// ObtenerEnviados selecciona la bandeja de entrada y obtiene los últimos N correos enviados por mejoracontinua@sao6.com.co.
 func (l *LectorGmailIMAP) ObtenerEnviados(limite int) ([]Correo, error) {
 	if l.cliente == nil {
 		return nil, fmt.Errorf("lector no conectado")
 	}
 
-	estadoBuzon, err := l.seleccionarCarpetaEnviados()
+	_, err := l.seleccionarCarpetaEnviados()
 	if err != nil {
 		return nil, err
 	}
 
-	if estadoBuzon.Messages == 0 {
+	// Buscar correos que sean del remitente mejoracontinua@sao6.com.co
+	criteria := imap.NewSearchCriteria()
+	criteria.Header.Set("FROM", "mejoracontinua@sao6.com.co")
+	ids, err := l.cliente.Search(criteria)
+	if err != nil {
+		return nil, fmt.Errorf("error al buscar correos en INBOX: %w", err)
+	}
+
+	if len(ids) == 0 {
 		return nil, nil
 	}
 
-	// Definir el rango de mensajes a obtener (los últimos N)
-	desde := uint32(1)
-	if estadoBuzon.Messages > uint32(limite) {
-		desde = estadoBuzon.Messages - uint32(limite) + 1
+	// Tomar los últimos N ids correspondientes al límite
+	if len(ids) > limite {
+		ids = ids[len(ids)-limite:]
 	}
-	hasta := estadoBuzon.Messages
 
 	seqset := new(imap.SeqSet)
-	seqset.AddRange(desde, hasta)
+	seqset.AddNum(ids...)
 
 	// Solicitar la sección del sobre (Envelope) y el cuerpo del mensaje
 	seccionCuerpo := &imap.BodySectionName{}
 	items := []imap.FetchItem{imap.FetchEnvelope, seccionCuerpo.FetchItem()}
 
-	mensajes := make(chan *imap.Message, limite)
+	mensajes := make(chan *imap.Message, len(ids))
 	done := make(chan error, 1)
 
 	go func() {

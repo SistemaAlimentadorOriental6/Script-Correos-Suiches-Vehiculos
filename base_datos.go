@@ -127,10 +127,12 @@ func GuardarReporteBateria(db *sql.DB, textoFormateado string, fechaPrueba time.
 		queryUpdate := `
 			UPDATE registros_bateria SET 
 				soc = ?, 
+				soh = ?, 
 				tension = ?, 
 				capacidad = ?, 
 				capacidad_medida = ?, 
 				temperatura = ?, 
+				observacion = ?, 
 				usuario_cedula = ?, 
 				correo_message_id = ?, 
 				origen = 'automatico',
@@ -140,10 +142,12 @@ func GuardarReporteBateria(db *sql.DB, textoFormateado string, fechaPrueba time.
 		_, errUpdate := db.Exec(
 			queryUpdate,
 			reporte.SOC,
+			reporte.SOH,
 			reporte.Tension,
 			reporte.Capacidad,
 			reporte.CapacidadMedida,
 			reporte.Temperatura,
+			sql.NullString{String: reporte.Observacion, Valid: reporte.Observacion != ""},
 			reporte.UsuarioCedula,
 			sql.NullString{String: reporte.MessageID, Valid: reporte.MessageID != ""},
 			sql.NullString{String: reporte.BusText, Valid: reporte.BusText != ""},
@@ -162,8 +166,8 @@ func GuardarReporteBateria(db *sql.DB, textoFormateado string, fechaPrueba time.
 	// Consulta SQL de inserción según la estructura de la base de datos (incluyendo origen)
 	query := `
 		INSERT INTO registros_bateria (
-			id, bus_id, bateria, soc, tension, capacidad, capacidad_medida, temperatura, usuario_cedula, fecha_registro, bus_, correo_message_id, origen
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'automatico')
+			id, bus_id, bateria, soc, soh, tension, capacidad, capacidad_medida, temperatura, observacion, usuario_cedula, fecha_registro, bus_, correo_message_id, origen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'automatico')
 	`
 
 	_, err := db.Exec(
@@ -172,10 +176,12 @@ func GuardarReporteBateria(db *sql.DB, textoFormateado string, fechaPrueba time.
 		sql.NullString{String: reporte.BusID, Valid: reporte.BusID != ""},
 		reporte.Bateria,
 		reporte.SOC,
+		reporte.SOH,
 		reporte.Tension,
 		reporte.Capacidad,
 		reporte.CapacidadMedida,
 		reporte.Temperatura,
+		sql.NullString{String: reporte.Observacion, Valid: reporte.Observacion != ""},
 		reporte.UsuarioCedula,
 		reporte.FechaRegistro,
 		sql.NullString{String: reporte.BusText, Valid: reporte.BusText != ""},
@@ -213,8 +219,12 @@ func ParsearTextoAReporte(texto string) ReporteBateria {
 		linea = strings.TrimSpace(linea)
 
 		if strings.Contains(linea, "SOH") {
-			// El SOH ya no se mapea o no importa según el usuario, pero lo mantenemos por si acaso en el parseo,
-			// pero ahora nuestra columna objetivo es SOC.
+			match := reNumeros.FindString(linea)
+			if match != "" {
+				if valFloat, err := strconv.ParseFloat(match, 64); err == nil {
+					reporte.SOH = valFloat
+				}
+			}
 		} else if strings.Contains(linea, "SOC (estado de carga):") {
 			// Ej: "SOC (estado de carga): 100%" -> Mapeamos el SOC a la columna soc (decimal)
 			match := reNumeros.FindString(linea)
@@ -244,17 +254,14 @@ func ParsearTextoAReporte(texto string) ReporteBateria {
 			// Ej: "Carro: BUS001"
 			reporte.BusText = strings.TrimSpace(strings.TrimPrefix(linea, "Carro:"))
 		} else if strings.Contains(linea, "Consejo de reparación:") {
-			// Ej: "Consejo de reparación: BUS002 BATERIA 2"
-			reBateria := regexp.MustCompile(`(?i)bater(?:í|i)a\s*\d+`)
-			matchBateria := reBateria.FindString(linea)
-			if matchBateria != "" {
-				reDigitos := regexp.MustCompile(`\d+`)
-				digito := reDigitos.FindString(matchBateria)
-				if digito != "" {
-					reporte.Bateria = fmt.Sprintf("BATERÍA %s", digito)
-				} else {
-					reporte.Bateria = strings.ToUpper(matchBateria)
-				}
+			// Guardar el Consejo de reparación como observación
+			reporte.Observacion = strings.TrimSpace(strings.TrimPrefix(linea, "Consejo de reparación:"))
+
+			// Ej: "Consejo de reparación: BUS002 BATERIA 2" o "batería1", etc.
+			reBateria := regexp.MustCompile(`(?i)bater[íi]a\s*(?:no\.?|n[úu]mero)?\s*(?::|-)?\s*(\d+)`)
+			matchBateria := reBateria.FindStringSubmatch(linea)
+			if len(matchBateria) > 1 {
+				reporte.Bateria = fmt.Sprintf("BATERÍA %s", matchBateria[1])
 			}
 		}
 	}

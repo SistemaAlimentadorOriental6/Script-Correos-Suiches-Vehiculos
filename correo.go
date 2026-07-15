@@ -26,10 +26,12 @@ type ReporteBateria struct {
 	BusID           string    `json:"bus_id"`
 	Bateria         string    `json:"bateria"`
 	SOC             float64   `json:"soc"`
+	SOH             float64   `json:"soh"`
 	Tension         string    `json:"tension"`
 	Capacidad       string    `json:"capacidad"`
 	CapacidadMedida string    `json:"capacidad_medida"`
 	Temperatura     float64   `json:"temperatura"`
+	Observacion     string    `json:"observacion"`
 	UsuarioCedula   string    `json:"usuario_cedula"`
 	FechaRegistro   time.Time `json:"fecha_registro"`
 	BusText         string    `json:"bus_"`

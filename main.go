@@ -10,9 +10,9 @@ import (
 )
 
 func main() {
-	// Credenciales de Gmail configuradas directamente en texto plano
-	usuario := "saomejoracontinua@gmail.com"
-	contrasena := "eemt juhn unzd epvd" // Asegúrate de colocar tu contraseña de aplicación de Gmail aquí
+	// Credenciales del servidor IMAP configuradas directamente en texto plano
+	usuario := "mejoracontinua@sao6.com.co"
+	contrasena := "Sao6/2025*+"
 
 	// URL del Webhook para enviar la información estructurada de la batería.
 	webhookURL := "" // Ejemplo: "https://webhook.site/tu-id-de-prueba"
@@ -27,7 +27,7 @@ func main() {
 	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", dbUsuario, dbContrasena, dbHost, dbPuerto, dbNombre)
 
 	if usuario == "" || contrasena == "" {
-		fmt.Println("Error: Debes configurar el usuario y la contraseña de Gmail directamente en el código.")
+		fmt.Println("Error: Debes configurar el usuario y la contraseña del correo directamente en el código.")
 		os.Exit(1)
 	}
 
@@ -41,18 +41,18 @@ func main() {
 		defer db.Close()
 	}
 
-	fmt.Println("Conectando al servidor IMAP de Gmail...")
+	fmt.Println("Conectando al servidor IMAP...")
 
 	// Aplicación del principio de Inversión de Dependencia (SOLID)
 	var lector LectorCorreo = &LectorGmailIMAP{}
 
-	err = lector.Conectar("imap.gmail.com", 993, usuario, contrasena)
+	err = lector.Conectar("mail.sao6.com.co", 993, usuario, contrasena)
 	if err != nil {
 		log.Fatalf("Error al conectar: %v", err)
 	}
 	defer lector.Cerrar()
 
-	fmt.Println("Conexión establecida con éxito a Gmail.")
+	fmt.Println("Conexión establecida con éxito al servidor de correo.")
 
 	// Crear carpeta para descargas si no existe
 	directorioDescargas := "descargas"

@@ -42,151 +42,123 @@ func extraerTextoPDF(ruta string) (string, error) {
 }
 
 // filtrarYFormatearReporte analiza el texto completo del reporte de Autel MaxiBAS
-// y extrae únicamente la información estructurada de la prueba de batería.
+// y extrae únicamente la información estructurada de la prueba de batería usando expresiones regulares globales.
 func filtrarYFormatearReporte(textoCompleto string) string {
-	// Normalizar espacios de no ruptura (non-breaking spaces \u00a0) a espacios comunes
+	// Normalizar espacios de no ruptura (non-breaking spaces \u00a0) y saltos de línea a espacios comunes para análisis continuo
 	textoNormalizado := strings.ReplaceAll(textoCompleto, "\u00a0", " ")
-	
-	lineasRaw := strings.Split(textoNormalizado, "\n")
-	var lineas []string
-	
-	// Limpiar espacios en blanco de cada línea
-	for _, l := range lineasRaw {
-		lineas = append(lineas, strings.TrimSpace(l))
-	}
+	textoNormalizado = strings.ReplaceAll(textoNormalizado, "\n", " ")
+	// Reducir múltiples espacios a uno solo
+	reEspacios := regexp.MustCompile(`\s+`)
+	textoNormalizado = reEspacios.ReplaceAllString(textoNormalizado, " ")
 
 	var resultado []string
 	
-	// Variables para almacenar los datos extraídos
-	var tipoPrueba string
-	var estadoBateria string
-	var soh string
-	var soc string
-	var tipoBateria string
-	var tension string
-	var capNominal string
-	var capMedida string
-	var temperatura string
-	var consejo string
-
-	// Buscar datos clave
-	for i := 0; i < len(lineas); i++ {
-		linea := lineas[i]
-
-		if strings.Contains(linea, "Prueba batería fuera vehículo") || strings.Contains(linea, "Prueba batería en vehículo") {
-			tipoPrueba = linea
-		}
-
-		if strings.Contains(linea, "Batería en bueno estado") || strings.Contains(linea, "Batería en buen estado") {
-			estadoBateria = "Batería en buen estado"
-		} else if strings.Contains(linea, "Reemplazar batería") {
-			estadoBateria = "Reemplazar batería"
-		} else if strings.Contains(linea, "Cargar y volver a probar") {
-			estadoBateria = "Cargar y volver a probar"
-		} else if strings.Contains(linea, "Sustitución batería") {
-			estadoBateria = "Sustitución batería"
-		}
-
-		if linea == "SOH" && i > 0 {
-			// El porcentaje de SOH suele estar en la línea anterior
-			soh = lineas[i-1]
-		}
-
-		// SOC y Temperatura pueden agruparse en la misma fila al leer por coordenadas
-		if strings.Contains(linea, "SOC (estado de carga):") && i+1 < len(lineas) {
-			siguiente := lineas[i+1]
-			if strings.Contains(linea, "Temperatura:") && strings.Contains(siguiente, "%") && strings.Contains(siguiente, "°C") {
-				reValores := regexp.MustCompile(`(\d+%\s*)(\d+\s*°C)`)
-				matches := reValores.FindStringSubmatch(siguiente)
-				if len(matches) > 2 {
-					soc = strings.TrimSpace(matches[1])
-					temperatura = strings.TrimSpace(matches[2])
-				} else {
-					soc = siguiente
-				}
-			} else {
-				soc = siguiente
-			}
-		}
-
-		if strings.Contains(linea, "Tipo de batería:") && i+1 < len(lineas) {
-			tipoBateria = lineas[i+1]
-		}
-
-		if strings.Contains(linea, "Tensión:") && i+1 < len(lineas) {
-			tension = lineas[i+1]
-		}
-
-		if strings.Contains(linea, "Capacidad nominal:") && i+1 < len(lineas) {
-			capNominal = lineas[i+1]
-		}
-
-		if strings.Contains(linea, "Capacidad medida:") && i+1 < len(lineas) {
-			capMedida = lineas[i+1]
-		}
-
-		// Solo asignar si no fue previamente extraída por el análisis combinado de SOC
-		if strings.Contains(linea, "Temperatura:") && !strings.Contains(linea, "SOC (estado de carga):") && i+1 < len(lineas) {
-			temperatura = lineas[i+1]
-		}
-
-		if strings.Contains(linea, "Consejo de reparación:") {
-			if len(linea) > len("Consejo de reparación:") {
-				consejo = strings.TrimSpace(strings.TrimPrefix(linea, "Consejo de reparación:"))
-			} else if i+1 < len(lineas) {
-				consejo = lineas[i+1]
-			}
-		}
+	// 1. Tipo de prueba
+	tipoPrueba := "Prueba batería"
+	if strings.Contains(strings.ToLower(textoNormalizado), "prueba batería fuera vehículo") || strings.Contains(strings.ToLower(textoNormalizado), "prueba bateria fuera vehiculo") {
+		tipoPrueba = "Prueba batería fuera vehículo"
+	} else if strings.Contains(strings.ToLower(textoNormalizado), "prueba batería en vehículo") || strings.Contains(strings.ToLower(textoNormalizado), "prueba bateria en vehiculo") {
+		tipoPrueba = "Prueba batería en vehículo"
 	}
+	resultado = append(resultado, tipoPrueba)
 
-	// Armar reporte organizado estructurado en español
-	if tipoPrueba != "" {
-		resultado = append(resultado, tipoPrueba)
-	} else {
-		resultado = append(resultado, "Prueba batería")
+	// 2. Estado de la batería
+	estadoBateria := ""
+	if regexp.MustCompile(`(?i)Bater[íi]a en buen(?:o)? estado`).MatchString(textoNormalizado) {
+		estadoBateria = "Batería en buen estado"
+	} else if regexp.MustCompile(`(?i)Reemplazar bater[íi]a`).MatchString(textoNormalizado) {
+		estadoBateria = "Reemplazar batería"
+	} else if regexp.MustCompile(`(?i)Cargar y volver a probar`).MatchString(textoNormalizado) {
+		estadoBateria = "Cargar y volver a probar"
+	} else if regexp.MustCompile(`(?i)Sustituci[oó]n bater[íi]a`).MatchString(textoNormalizado) {
+		estadoBateria = "Sustitución batería"
 	}
-
 	if estadoBateria != "" {
 		resultado = append(resultado, estadoBateria)
 	}
-	if soh != "" {
+
+	// 3. SOH
+	soh := ""
+	reSOH := regexp.MustCompile(`(\d+)\s*%\s*SOH`)
+	matchSOH := reSOH.FindStringSubmatch(textoNormalizado)
+	if len(matchSOH) > 1 {
+		soh = matchSOH[1] + "%"
 		resultado = append(resultado, fmt.Sprintf("%s SOH", soh))
 	}
-	if soc != "" {
+
+	// 4. SOC
+	soc := ""
+	reSOC := regexp.MustCompile(`(?i)SOC\s*\(estado de carga\)\s*:\s*(\d+)\s*%`)
+	matchSOC := reSOC.FindStringSubmatch(textoNormalizado)
+	if len(matchSOC) > 1 {
+		soc = matchSOC[1] + "%"
 		resultado = append(resultado, fmt.Sprintf("SOC (estado de carga): %s", soc))
 	}
-	if tipoBateria != "" {
+
+	// 5. Tipo de batería
+	tipoBateria := ""
+	reTipoBat := regexp.MustCompile(`(?i)Tipo de bater[íi]a\s*:\s*([A-Z0-9a-z_-]+)`)
+	matchTipoBat := reTipoBat.FindStringSubmatch(textoNormalizado)
+	if len(matchTipoBat) > 1 {
+		tipoBateria = matchTipoBat[1]
 		resultado = append(resultado, fmt.Sprintf("Tipo de batería: %s", tipoBateria))
 	}
-	if tension != "" {
+
+	// 6. Tensión
+	tension := ""
+	reTension := regexp.MustCompile(`(?i)Tensi[oó]n\s*:\s*([\d\.]+\s*V)`)
+	matchTension := reTension.FindStringSubmatch(textoNormalizado)
+	if len(matchTension) > 1 {
+		tension = matchTension[1]
 		resultado = append(resultado, fmt.Sprintf("Tensión: %s", tension))
 	}
-	if capNominal != "" {
+
+	// 7. Capacidad nominal
+	capNominal := ""
+	reCapNom := regexp.MustCompile(`(?i)Capacidad nominal\s*:\s*([^\s:]+\s*(?:CCA|EN|SAE|IEC|DIN))`)
+	matchCapNom := reCapNom.FindStringSubmatch(textoNormalizado)
+	if len(matchCapNom) > 1 {
+		capNominal = matchCapNom[1]
 		resultado = append(resultado, fmt.Sprintf("Capacidad nominal: %s", capNominal))
 	}
-	if capMedida != "" {
+
+	// 8. Capacidad medida
+	capMedida := ""
+	reCapMed := regexp.MustCompile(`(?i)Capacidad medida\s*:\s*([^\s:]+\s*(?:CCA|EN|SAE|IEC|DIN))`)
+	matchCapMed := reCapMed.FindStringSubmatch(textoNormalizado)
+	if len(matchCapMed) > 1 {
+		capMedida = matchCapMed[1]
 		resultado = append(resultado, fmt.Sprintf("Capacidad medida: %s", capMedida))
 	}
-	if temperatura != "" {
+
+	// 9. Temperatura
+	temperatura := ""
+	reTemp := regexp.MustCompile(`(?i)Temperatura\s*:\s*([-+]?\d+\s*°C|[-+]?\d+\s*ºC|[-+]?\d+)`)
+	matchTemp := reTemp.FindStringSubmatch(textoNormalizado)
+	if len(matchTemp) > 1 {
+		temperatura = matchTemp[1]
 		resultado = append(resultado, fmt.Sprintf("Temperatura: %s", temperatura))
 	}
-	if consejo != "" {
+
+	// 10. Consejo de reparación
+	consejo := ""
+	reConsejo := regexp.MustCompile(`(?i)Consejo de reparaci[oó]n\s*:\s*(.*?)\s*(?:Inspecci[oó]n visual|Detalles:|Nombre del cliente|T[eé]cnico:|Fecha:|Nota:|$)`)
+	matchConsejo := reConsejo.FindStringSubmatch(textoNormalizado)
+	if len(matchConsejo) > 1 {
+		consejo = strings.TrimSpace(matchConsejo[1])
 		resultado = append(resultado, fmt.Sprintf("Consejo de reparación: %s", consejo))
 	}
 
-	// Extraer el número de carro (BUS) del Consejo de reparación
-	var carro string
-	if consejo != "" {
-		re := regexp.MustCompile(`(?i)bus\s*(\d+)`)
-		match := re.FindStringSubmatch(consejo)
-		if len(match) > 1 {
-			digitos := match[1]
-			// Convertir a int para formatear con ceros a la izquierda (ej: 001)
-			if num, err := strconv.Atoi(digitos); err == nil {
-				carro = fmt.Sprintf("BUS%03d", num)
-			} else {
-				carro = "BUS" + digitos
-			}
+	// 11. Extraer el número de carro (BUS) de todo el texto normalizado (o del consejo)
+	carro := ""
+	reBus := regexp.MustCompile(`(?i)b[úu]s\s*(?:no\.?|n[úu]mero)?\s*(?::|-)?\s*(\d+)`)
+	matchBus := reBus.FindStringSubmatch(textoNormalizado)
+	if len(matchBus) > 1 {
+		digitos := matchBus[1]
+		if num, err := strconv.Atoi(digitos); err == nil {
+			carro = fmt.Sprintf("BUS%03d", num)
+		} else {
+			carro = "BUS" + digitos
 		}
 	}
 	resultado = append(resultado, fmt.Sprintf("Carro: %s", carro))

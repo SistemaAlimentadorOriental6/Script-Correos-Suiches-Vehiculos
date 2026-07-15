@@ -36,23 +36,44 @@ func (l *LectorGmailIMAP) Conectar(servidor string, puerto int, usuario string, 
 	return nil
 }
 
+// seleccionarCarpetaEnviados intenta abrir una carpeta de enviados de una lista de nombres comunes.
+func (l *LectorGmailIMAP) seleccionarCarpetaEnviados() (*imap.MailboxStatus, error) {
+	carpetasComunes := []string{
+		"INBOX.Sent",
+		"INBOX.Sent Items",
+		"INBOX.Enviados",
+		"INBOX.Archivos enviados",
+		"INBOX.Sent Messages",
+		"Sent",
+		"Sent Items",
+		"Enviados",
+		"Archivos enviados",
+		"Sent Messages",
+		"[Gmail]/Sent Mail",
+		"[Gmail]/Enviados",
+	}
+
+	var err error
+	var estadoBuzon *imap.MailboxStatus
+	for _, nombre := range carpetasComunes {
+		estadoBuzon, err = l.cliente.Select(nombre, true)
+		if err == nil {
+			log.Printf("Carpeta de enviados seleccionada con éxito: %q\n", nombre)
+			return estadoBuzon, nil
+		}
+	}
+	return nil, fmt.Errorf("no se pudo encontrar ni abrir ninguna carpeta de enviados estándar: %w", err)
+}
+
 // ObtenerEnviados selecciona la carpeta de enviados y obtiene los últimos N correos.
 func (l *LectorGmailIMAP) ObtenerEnviados(limite int) ([]Correo, error) {
 	if l.cliente == nil {
 		return nil, fmt.Errorf("lector no conectado")
 	}
 
-	// Las carpetas comunes de enviados en Gmail son "[Gmail]/Sent Mail" o "[Gmail]/Enviados"
-	// Intentamos seleccionar "[Gmail]/Sent Mail" primero, si falla intentamos con "Sent Mail" o "[Gmail]/Enviados"
-	nombreBuzon := "[Gmail]/Sent Mail"
-	estadoBuzon, err := l.cliente.Select(nombreBuzon, true)
+	estadoBuzon, err := l.seleccionarCarpetaEnviados()
 	if err != nil {
-		// Reintento con variantes si no existe
-		nombreBuzonAlt := "[Gmail]/Enviados"
-		estadoBuzon, err = l.cliente.Select(nombreBuzonAlt, true)
-		if err != nil {
-			return nil, fmt.Errorf("no se pudo abrir la carpeta de enviados: %w", err)
-		}
+		return nil, err
 	}
 
 	if estadoBuzon.Messages == 0 {
@@ -168,14 +189,9 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 	log.Println("Iniciando monitoreo...")
 
 	// Seleccionar el buzón inicialmente para obtener el número actual de mensajes
-	nombreBuzon := "[Gmail]/Sent Mail"
-	estadoBuzon, err := l.cliente.Select(nombreBuzon, true)
+	estadoBuzon, err := l.seleccionarCarpetaEnviados()
 	if err != nil {
-		nombreBuzonAlt := "[Gmail]/Enviados"
-		estadoBuzon, err = l.cliente.Select(nombreBuzonAlt, true)
-		if err != nil {
-			return fmt.Errorf("error al inicializar monitoreo en carpeta de enviados: %w", err)
-		}
+		return fmt.Errorf("error al inicializar monitoreo en carpeta de enviados: %w", err)
 	}
 
 	// Mantener el registro de la cantidad de mensajes iniciales como punto de partida
@@ -188,14 +204,7 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 
 	for range ticker.C {
 		// Volver a seleccionar el buzón para refrescar el estado de los mensajes en el servidor
-		var estadoBuzonActual *imap.MailboxStatus
-		nombreBuzonActual := "[Gmail]/Sent Mail"
-		estadoBuzonActual, err = l.cliente.Select(nombreBuzonActual, true)
-		if err != nil {
-			nombreBuzonAlt := "[Gmail]/Enviados"
-			estadoBuzonActual, err = l.cliente.Select(nombreBuzonAlt, true)
-		}
-
+		estadoBuzonActual, err := l.seleccionarCarpetaEnviados()
 		if err != nil {
 			log.Printf("Error al seleccionar buzón durante el monitoreo: %v\n", err)
 			continue

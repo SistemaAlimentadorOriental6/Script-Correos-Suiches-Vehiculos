@@ -1,0 +1,11 @@
+Prueba batería fuera vehículo
+Batería en buen estado
+99% SOH
+SOC (estado de carga): 98%
+Tipo de batería: FLOODEDTensi
+Tensión: 12.59 V
+Capacidad nominal: 750 CCA
+Capacidad medida: 732 CCA
+Temperatura: 35 °C
+Consejo de reparación: Batería normal. Se encargue de su mantenimiento dentro de 90 días.
+Carro: 

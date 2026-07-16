@@ -1,0 +1,10 @@
+Prueba batería
+SOC (estado de carga): 100%
+Tipo de batería: FLOODED
+Tensión: 12.71 V
+Capacidad nominal: 750 CCA
+Capacidad medida: 521 CCA
+Temperatura: 28 °C
+Consejo de reparación: Reemplace la batería lo antes posible.
+Carro: BUS051
+Batería: BATERÍA 1

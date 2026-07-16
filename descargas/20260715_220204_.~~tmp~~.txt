@@ -1,0 +1,11 @@
+Prueba batería
+Batería en buen estado
+SOC (estado de carga): 100%
+Tipo de batería: FLOODED
+Tensión: 12.71 V
+Capacidad nominal: 750 CCA
+Capacidad medida: 659 CCA
+Temperatura: 28 °C
+Consejo de reparación: Batería normal. Se encargue de su mantenimiento dentro de 90 días.
+Carro: BUS051
+Batería: BATERÍA 2

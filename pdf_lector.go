@@ -46,6 +46,30 @@ func filtrarYFormatearReporte(textoCompleto string) string {
 	// Normalizar espacios de no ruptura (non-breaking spaces \u00a0) y saltos de línea a espacios comunes para análisis continuo
 	textoNormalizado := strings.ReplaceAll(textoCompleto, "\u00a0", " ")
 	textoNormalizado = strings.ReplaceAll(textoNormalizado, "\n", " ")
+
+	// Insertar espacios en transiciones clave pegadas debido al formateador del lector PDF
+	reemplazos := [][2]string{
+		{"SOC", " SOC"},
+		{"Tipo", " Tipo"},
+		{"Tensión", " Tensión"},
+		{"Tension", " Tension"},
+		{"Capacidad", " Capacidad"},
+		{"Temperatura", " Temperatura"},
+		{"Consejo", " Consejo"},
+		{"Inspección", " Inspección"},
+		{"Inspeccion", " Inspeccion"},
+		{"Detalles", " Detalles"},
+		{"Nombre", " Nombre"},
+		{"Técnico", " Técnico"},
+		{"Tecnico", " Tecnico"},
+		{"Fecha", " Fecha"},
+		{"Nota", " Nota"},
+		{"Guarde", " Guarde"},
+	}
+	for _, r := range reemplazos {
+		textoNormalizado = strings.ReplaceAll(textoNormalizado, r[0], r[1])
+	}
+
 	// Reducir múltiples espacios a uno solo
 	reEspacios := regexp.MustCompile(`\s+`)
 	textoNormalizado = reEspacios.ReplaceAllString(textoNormalizado, " ")
@@ -151,6 +175,17 @@ func filtrarYFormatearReporte(textoCompleto string) string {
 	// 11. Extraer el número de carro (BUS) con detección tolerante a errores tipográficos
 	carro := extraerNumeroBus(textoNormalizado)
 	resultado = append(resultado, fmt.Sprintf("Carro: %s", carro))
+
+	// 12. Extraer número de batería desde la sección "Detalles:" del PDF
+	// Ej: "Detalles: bus 051 bateria 2" -> "BATERÍA 2"
+	reDetalles := regexp.MustCompile(`(?i)Detalles:\s*(.*?)(?:\s*Nombre|\s*T[eé]cnico|$)`)
+	matchDetalles := reDetalles.FindStringSubmatch(textoNormalizado)
+	if len(matchDetalles) > 1 {
+		seccionDetalles := matchDetalles[1]
+		if bat := extraerNumeroBateria(seccionDetalles); bat != "" {
+			resultado = append(resultado, fmt.Sprintf("Batería: %s", bat))
+		}
+	}
 
 	return strings.Join(resultado, "\n")
 }

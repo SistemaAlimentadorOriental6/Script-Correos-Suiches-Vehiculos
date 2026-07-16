@@ -1,8 +1,0 @@
-Prueba batería fuera vehículo
-SOC (estado de carga): 60%
-Tipo de batería: AGMTensi
-Tensión: 12.42 V
-Capacidad nominal: 750 CCA
-Capacidad medida: 401 CCA
-Consejo de reparación: Batería normal. Se encargue de su mantenimiento dentro de 90 días.
-Carro: 

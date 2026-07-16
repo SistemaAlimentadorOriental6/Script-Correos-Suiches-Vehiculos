@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"database/sql"
 	"fmt"
 	"log"
@@ -86,14 +87,40 @@ func ResolverBusID(db *sql.DB, carro string) (string, error) {
 }
 
 // GuardarReporteBateria extrae los datos del texto del reporte e inserta la información en registros_bateria.
-func GuardarReporteBateria(db *sql.DB, textoFormateado string, fechaPrueba time.Time, messageID string) error {
+func GuardarReporteBateria(db *sql.DB, textoFormateado string, correo Correo, messageID string) error {
 	// Convertir la fecha de la prueba a la zona horaria de Colombia (UTC-5)
 	locCol := time.FixedZone("America/Bogota", -5*60*60)
-	fechaPruebaCol := fechaPrueba.In(locCol)
+	fechaPruebaCol := correo.Fecha.In(locCol)
 
 	reporte := ParsearTextoAReporte(textoFormateado)
 	reporte.FechaRegistro = fechaPruebaCol
-	reporte.MessageID = messageID
+	if messageID == "" {
+		// Si el Message-ID original es vacío, generamos uno determinista único basado en metadatos y adjuntos
+		var infoAdjuntos string
+		for _, adj := range correo.Adjuntos {
+			infoAdjuntos += fmt.Sprintf("-%s-%d", adj.Nombre, len(adj.Contenido))
+		}
+		datosUnicos := fmt.Sprintf("%s-%s-%s%s", correo.De, correo.Fecha.Format(time.RFC3339), correo.Asunto, infoAdjuntos)
+		reporte.MessageID = fmt.Sprintf("HASH-%x", md5.Sum([]byte(datosUnicos)))
+	} else {
+		reporte.MessageID = messageID
+	}
+
+	// Si el número de batería es el por defecto (BATERÍA 1), intentar extraer del Asunto o Cuerpo del correo
+	if reporte.Bateria == "BATERÍA 1" {
+		textoAdicional := correo.Asunto + " " + correo.Cuerpo
+		if bat := extraerNumeroBateria(textoAdicional); bat != "" {
+			reporte.Bateria = bat
+		}
+	}
+
+	// Si el número de bus está vacío, intentar extraer del Asunto o Cuerpo del correo
+	if reporte.BusText == "" || reporte.BusText == "BUS" {
+		textoAdicional := correo.Asunto + " " + correo.Cuerpo
+		if bus := extraerNumeroBus(textoAdicional); bus != "" {
+			reporte.BusText = bus
+		}
+	}
 
 	// Resolver el bus_id (UUID) a partir del nombre legible del carro
 	if reporte.BusText != "" {
@@ -108,6 +135,17 @@ func GuardarReporteBateria(db *sql.DB, textoFormateado string, fechaPrueba time.
 	// Si no se pudo resolver el bus_id y es requerido, usaremos un UUID nulo o vacío
 	if reporte.BusID == "" {
 		log.Println("Advertencia: Insertando registro con bus_id vacío.")
+	}
+
+	// Validar si el Message-ID ya existe en la base de datos para evitar duplicados del mismo correo
+	if reporte.MessageID != "" {
+		var idDuplicado string
+		queryCheckMsg := "SELECT id FROM registros_bateria WHERE correo_message_id = ? LIMIT 1"
+		errCheckMsg := db.QueryRow(queryCheckMsg, reporte.MessageID).Scan(&idDuplicado)
+		if errCheckMsg == nil {
+			log.Printf("Base de Datos: El reporte para el correo con Message-ID %s ya existe (ID: %s). Omitiendo duplicado.\n", reporte.MessageID, idDuplicado)
+			return nil
+		}
 	}
 
 	// Verificar si ya existe un registro para el mismo bus, batería y día
@@ -250,17 +288,25 @@ func ParsearTextoAReporte(texto string) ReporteBateria {
 					reporte.Temperatura = val
 				}
 			}
+		} else if strings.Contains(linea, "Batería:") && !strings.Contains(linea, "Tipo de batería:") {
+			// Ej: "Batería: BATERÍA 2" - extraído de la sección Detalles del PDF
+			bat := strings.TrimSpace(strings.TrimPrefix(linea, "Batería:"))
+			if bat != "" {
+				reporte.Bateria = bat
+			}
 		} else if strings.Contains(linea, "Carro:") {
 			// Ej: "Carro: BUS001"
 			reporte.BusText = strings.TrimSpace(strings.TrimPrefix(linea, "Carro:"))
 		} else if strings.Contains(linea, "Consejo de reparación:") {
 			// Guardar el Consejo de reparación como observación
 			reporte.Observacion = strings.TrimSpace(strings.TrimPrefix(linea, "Consejo de reparación:"))
+		}
+	}
 
-			// Detectar número de batería con tolerancia a errores tipográficos
-			if bat := extraerNumeroBateria(linea); bat != "" {
-				reporte.Bateria = bat
-			}
+	// Si el bus no se detectó en el TXT, buscar con fuzzy en todo el texto
+	if reporte.BusText == "" || reporte.BusText == "BUS" {
+		if bus := extraerNumeroBus(texto); bus != "" {
+			reporte.BusText = bus
 		}
 	}
 

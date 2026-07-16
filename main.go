@@ -60,8 +60,8 @@ func main() {
 		log.Fatalf("Error al crear la carpeta de descargas: %v", err)
 	}
 
-	fmt.Println("Obteniendo el último correo enviado...")
-	correos, err := lector.ObtenerEnviados(1)
+	fmt.Println("Obteniendo los últimos correos enviados...")
+	correos, err := lector.ObtenerEnviados(10)
 	if err != nil {
 		log.Fatalf("Error al obtener el último correo enviado: %v", err)
 	}
@@ -132,11 +132,11 @@ func procesarCorreo(correo Correo, directorioDescargas string, webhookURL string
 		}
 
 		// Eliminar el PDF del disco para no acumular archivos innecesarios
-		if errBorrar := os.Remove(rutaArchivo); errBorrar != nil {
+		/* if errBorrar := os.Remove(rutaArchivo); errBorrar != nil {
 			fmt.Printf("        - [ADVERTENCIA] No se pudo eliminar el PDF %s: %v\n", rutaArchivo, errBorrar)
 		} else {
 			fmt.Printf("        - [PDF Eliminado] %s borrado del disco.\n", rutaArchivo)
-		}
+		} */
 
 		// Generar nombre de archivo TXT reemplazando la extensión
 		nombreTXT := strings.TrimSuffix(nombreUnico, filepath.Ext(nombreUnico)) + ".txt"
@@ -154,7 +154,7 @@ func procesarCorreo(correo Correo, directorioDescargas string, webhookURL string
 			// Persistir datos en MySQL si la conexión a la base de datos está activa
 			if db != nil {
 				fmt.Println("        [Base de Datos] Guardando registro de batería en MySQL...")
-				errDB := GuardarReporteBateria(db, textoFormateado, correo.Fecha, correo.MessageID)
+				errDB := GuardarReporteBateria(db, textoFormateado, correo, correo.MessageID)
 				if errDB != nil {
 					fmt.Printf("        - [ERROR BD] No se pudo registrar en la base de datos: %v\n", errDB)
 				}

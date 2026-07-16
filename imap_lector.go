@@ -131,6 +131,11 @@ func (l *LectorGmailIMAP) ObtenerEnviados(limite int) ([]Correo, error) {
 		if r != nil {
 			mr, err := mail.CreateReader(r)
 			if err == nil {
+				if correo.MessageID == "" {
+					if msgID := mr.Header.Get("Message-ID"); msgID != "" {
+						correo.MessageID = strings.Trim(msgID, "<>")
+					}
+				}
 				for {
 					p, err := mr.NextPart()
 					if err == io.EOF {
@@ -187,27 +192,42 @@ func (l *LectorGmailIMAP) Cerrar() error {
 
 // Monitorear escucha en tiempo real la llegada de nuevos correos en la carpeta de enviados mediante polling periódico.
 // Si la sesión IMAP expira (error "Not logged in"), intenta reconectarse automáticamente.
+// Monitorear escucha en tiempo real la llegada de nuevos correos en la carpeta de recibidos (INBOX)
+// filtrando únicamente los que provengan de mejoracontinua@sao6.com.co.
+// Si la sesión IMAP expira, intenta reconectarse automáticamente.
 func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 	if l.cliente == nil {
 		return fmt.Errorf("lector no conectado")
 	}
 
-	log.Println("Iniciando monitoreo...")
+	log.Println("Iniciando monitoreo de nuevos correos de mejoracontinua@sao6.com.co en INBOX...")
 
-	// Seleccionar el buzón inicialmente para obtener el número actual de mensajes
-	estadoBuzon, err := l.seleccionarCarpetaEnviados()
+	// 1. Obtener el estado inicial y los correos existentes del remitente
+	_, err := l.seleccionarCarpetaEnviados()
 	if err != nil {
-		return fmt.Errorf("error al inicializar monitoreo en carpeta de enviados: %w", err)
+		return fmt.Errorf("error al inicializar monitoreo: %w", err)
 	}
 
-	ultimoProcesadoID := estadoBuzon.Messages
-	log.Printf("Monitoreo inicializado. Mensajes actuales en Enviados: %d\n", ultimoProcesadoID)
+	criteria := imap.NewSearchCriteria()
+	criteria.Header.Set("FROM", "mejoracontinua@sao6.com.co")
+	idsExistentes, err := l.cliente.Search(criteria)
+	if err != nil {
+		return fmt.Errorf("error al buscar correos iniciales: %w", err)
+	}
+
+	var maxID uint32
+	for _, id := range idsExistentes {
+		if id > maxID {
+			maxID = id
+		}
+	}
+	log.Printf("Monitoreo inicializado. ID de correo máximo conocido del remitente: %d\n", maxID)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		estadoBuzonActual, err := l.seleccionarCarpetaEnviados()
+		_, err := l.seleccionarCarpetaEnviados()
 		if err != nil {
 			// Detectar si la sesión expiró y reconectar
 			if strings.Contains(err.Error(), "Not logged in") || strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "connection reset") {
@@ -228,29 +248,118 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 			continue
 		}
 
-		mensajesTotales := estadoBuzonActual.Messages
+		// Buscar correos del remitente
+		idsActuales, err := l.cliente.Search(criteria)
+		if err != nil {
+			log.Printf("Error al buscar correos durante el monitoreo: %v\n", err)
+			continue
+		}
 
-		if mensajesTotales > ultimoProcesadoID {
-			diferencia := int(mensajesTotales - ultimoProcesadoID)
-			log.Printf("Se detectaron %d nuevos mensajes en Enviados. Obteniendo...\n", diferencia)
+		// Encontrar nuevos IDs mayores al máximo procesado
+		var idsNuevos []uint32
+		for _, id := range idsActuales {
+			if id > maxID {
+				idsNuevos = append(idsNuevos, id)
+			}
+		}
 
-			nuevosCorreos, err := l.ObtenerEnviados(diferencia)
-			if err != nil {
-				log.Printf("Error al obtener nuevos correos: %v\n", err)
+		if len(idsNuevos) > 0 {
+			log.Printf("Se detectaron %d nuevos correos de mejoracontinua@sao6.com.co. Obteniendo...\n", len(idsNuevos))
+
+			// Traer y procesar esos correos específicos
+			seqset := new(imap.SeqSet)
+			seqset.AddNum(idsNuevos...)
+
+			seccionCuerpo := &imap.BodySectionName{}
+			items := []imap.FetchItem{imap.FetchEnvelope, seccionCuerpo.FetchItem()}
+
+			mensajes := make(chan *imap.Message, len(idsNuevos))
+			done := make(chan error, 1)
+
+			go func() {
+				done <- l.cliente.Fetch(seqset, items, mensajes)
+			}()
+
+			var nuevosCorreos []Correo
+			for msg := range mensajes {
+				correo := Correo{
+					ID:        msg.SeqNum,
+					MessageID: msg.Envelope.MessageId,
+					Asunto:    msg.Envelope.Subject,
+					Fecha:     msg.Envelope.Date,
+				}
+
+				if len(msg.Envelope.From) > 0 {
+					correo.De = fmt.Sprintf("%s <%s@%s>", msg.Envelope.From[0].PersonalName, msg.Envelope.From[0].MailboxName, msg.Envelope.From[0].HostName)
+				}
+
+				for _, para := range msg.Envelope.To {
+					correo.Para = append(correo.Para, fmt.Sprintf("%s <%s@%s>", para.PersonalName, para.MailboxName, para.HostName))
+				}
+
+				r := msg.GetBody(seccionCuerpo)
+				if r != nil {
+					mr, err := mail.CreateReader(r)
+					if err == nil {
+						if correo.MessageID == "" {
+							if msgID := mr.Header.Get("Message-ID"); msgID != "" {
+								correo.MessageID = strings.Trim(msgID, "<>")
+							}
+						}
+						for {
+							p, err := mr.NextPart()
+							if err == io.EOF {
+								break
+							} else if err != nil {
+								break
+							}
+
+							switch h := p.Header.(type) {
+							case *mail.InlineHeader:
+								contentType, _, _ := h.ContentType()
+								if strings.HasPrefix(contentType, "text/plain") {
+									b, _ := io.ReadAll(p.Body)
+									correo.Cuerpo = string(b)
+								}
+							case *mail.AttachmentHeader:
+								nombre, err := h.Filename()
+								if err != nil {
+									continue
+								}
+								if strings.HasSuffix(strings.ToLower(nombre), ".pdf") {
+									b, err := io.ReadAll(p.Body)
+									if err == nil {
+										correo.Adjuntos = append(correo.Adjuntos, Adjunto{
+											Nombre:    nombre,
+											Contenido: b,
+										})
+									}
+								}
+							}
+						}
+					}
+				}
+
+				nuevosCorreos = append([]Correo{correo}, nuevosCorreos...)
+			}
+
+			if errFetch := <-done; errFetch != nil {
+				log.Printf("Error al traer nuevos correos: %v\n", errFetch)
 				continue
 			}
 
-			// NOTA: ObtenerEnviados inserta al inicio los más nuevos (orden descendente).
-			// Para procesarlos en orden cronológico correcto iteramos en reversa.
+			// Encolar y actualizar el ID máximo conocido
 			for i := len(nuevosCorreos) - 1; i >= 0; i-- {
 				correoNuevo := nuevosCorreos[i]
 				log.Printf("Procesando y encolando correo: ID %d, Asunto: %s\n", correoNuevo.ID, correoNuevo.Asunto)
 				canalCorreos <- correoNuevo
 			}
 
-			ultimoProcesadoID = mensajesTotales
-		} else if mensajesTotales < ultimoProcesadoID {
-			ultimoProcesadoID = mensajesTotales
+			for _, id := range idsNuevos {
+				if id > maxID {
+					maxID = id
+				}
+			}
 		}
 	}
 

@@ -232,6 +232,7 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 			// Detectar si la sesión expiró y reconectar
 			if strings.Contains(err.Error(), "Not logged in") || strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "connection reset") {
 				log.Println("Sesión IMAP expirada. Reconectando...")
+				reconectado := false
 				for intento := 1; intento <= 5; intento++ {
 					if errRecon := l.reconectar(); errRecon != nil {
 						espera := time.Duration(intento*30) * time.Second
@@ -239,8 +240,12 @@ func (l *LectorGmailIMAP) Monitorear(canalCorreos chan<- Correo) error {
 						time.Sleep(espera)
 					} else {
 						log.Println("Reconexión exitosa al servidor IMAP.")
+						reconectado = true
 						break
 					}
+				}
+				if !reconectado {
+					return fmt.Errorf("no se pudo reconectar al servidor IMAP tras 5 intentos")
 				}
 			} else {
 				log.Printf("Error al seleccionar buzón durante el monitoreo: %v\n", err)

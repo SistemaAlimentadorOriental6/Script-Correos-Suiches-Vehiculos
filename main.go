@@ -81,7 +81,7 @@ func main() {
 	go func() {
 		err := lector.Monitorear(canalCorreos)
 		if err != nil {
-			log.Printf("Error en el monitoreo en tiempo real: %v\n", err)
+			log.Fatalf("Error crítico en el monitoreo en tiempo real: %v\n", err)
 		}
 	}()
 
